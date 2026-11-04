@@ -80,7 +80,10 @@
 
     async function load() {
       try {
-        poll = await api(`/api/polls/${id}`);
+        // Ask "did I vote?" once; after that, poll the cached results only.
+        const first = !poll;
+        const data = await api(`/api/polls/${id}${first ? "?me=1" : ""}`);
+        poll = { ...data, voted: first ? data.voted : poll.voted };
         if (!$("#question")) shell();
         render();
       } catch (err) {

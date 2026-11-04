@@ -1,5 +1,9 @@
 """WowPoll (wowpoll.com) - dead-simple polls for streamers.
 
+Storage:
+  - DATABASE_URL set (postgres://...)  -> Postgres (production, e.g. Neon on FastAPI Cloud)
+  - otherwise                          -> local SQLite file (development)
+
 Run locally:  python -m uvicorn app:app --reload
 """
 import hashlib
@@ -8,7 +12,6 @@ import json
 import os
 import secrets
 import sqlite3
-import threading
 import time
 from collections import defaultdict, deque
 from contextlib import contextmanager
@@ -21,72 +24,147 @@ from pydantic import BaseModel, Field
 
 BASE = Path(__file__).parent
 STATIC = BASE / "static"
-DB_PATH = os.environ.get("DB_PATH", str(BASE / "polls.db"))
-# Secret used to hash IPs so raw addresses are never stored.
-SECRET = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
-# Set TRUST_PROXY=1 when running behind a reverse proxy (Render, Fly, Railway, nginx...).
-TRUST_PROXY = os.environ.get("TRUST_PROXY", "0") == "1"
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+IS_PG = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+SQLITE_PATH = os.environ.get("DB_PATH", str(BASE / "polls.db"))
+
+# How many reverse proxies sit in front of the app. The client IP is taken that many
+# entries from the right of X-Forwarded-For (the right side is added by trusted proxies,
+# the left side can be faked by the client). Defaults to 1 on FastAPI Cloud, 0 locally.
+ON_FASTAPI_CLOUD = "FASTAPICLOUD_DEPLOYMENT_ID" in os.environ
+PROXY_HOPS = int(os.environ.get("PROXY_HOPS", "1" if ON_FASTAPI_CLOUD else "0"))
+DEBUG_IP = os.environ.get("DEBUG_IP") == "1"
 
 MAX_OPTIONS = 10
 MAX_QUESTION = 200
 MAX_OPTION = 80
 CREATE_LIMIT_PER_HOUR = 30
+CACHE_TTL = 1.0  # seconds; results polling is served from memory within this window
 
 ID_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no look-alike chars
 
 app = FastAPI(title="WowPoll", docs_url=None, redoc_url=None)
-_db_lock = threading.Lock()
 
 
 # ---------- database ----------
 
+if IS_PG:
+    import psycopg
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    _pool = ConnectionPool(
+        DATABASE_URL,
+        min_size=1,
+        max_size=int(os.environ.get("DB_POOL_SIZE", "10")),
+        kwargs={"autocommit": True, "row_factory": dict_row},
+        check=ConnectionPool.check_connection,  # survive Neon idling connections
+        open=True,
+    )
+    IntegrityError = psycopg.IntegrityError
+else:
+    IntegrityError = sqlite3.IntegrityError
+
+
+class Conn:
+    """Tiny wrapper so the same SQL (with ? placeholders) runs on SQLite and Postgres."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def q(self, sql: str, params: tuple = ()):
+        if IS_PG:
+            sql = sql.replace("?", "%s")
+        return self.raw.execute(sql, params)
+
+    def one(self, sql: str, params: tuple = ()):
+        return self.q(sql, params).fetchone()
+
+    def all(self, sql: str, params: tuple = ()):
+        return self.q(sql, params).fetchall()
+
+
+def _dict_factory(cursor, row):
+    return {d[0]: row[i] for i, d in enumerate(cursor.description)}
+
+
 @contextmanager
 def db():
-    conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
+    if IS_PG:
+        with _pool.connection() as conn:
+            yield Conn(conn)
+    else:
+        conn = sqlite3.connect(SQLITE_PATH, timeout=10, isolation_level=None)
+        conn.row_factory = _dict_factory
+        try:
+            yield Conn(conn)
+        finally:
+            conn.close()
 
 
-def init_db() -> None:
+SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS polls (
+        id          TEXT PRIMARY KEY,
+        question    TEXT NOT NULL,
+        options     TEXT NOT NULL,
+        admin_token TEXT NOT NULL,
+        strict_ip   INTEGER NOT NULL DEFAULT 1,
+        closed      INTEGER NOT NULL DEFAULT 0,
+        created_at  BIGINT NOT NULL
+    )""",
+    # ip_key is the IP hash for strict polls and NULL otherwise. NULLs never collide in a
+    # UNIQUE constraint, so the database itself enforces "one vote per browser" and
+    # (for strict polls) "one vote per network", even with many app replicas.
+    """CREATE TABLE IF NOT EXISTS votes (
+        poll_id    TEXT NOT NULL,
+        option_idx INTEGER NOT NULL,
+        voter_id   TEXT NOT NULL,
+        ip_key     TEXT,
+        created_at BIGINT NOT NULL,
+        UNIQUE (poll_id, voter_id),
+        UNIQUE (poll_id, ip_key)
+    )""",
+    "CREATE INDEX IF NOT EXISTS votes_poll_option ON votes (poll_id, option_idx)",
+    """CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )""",
+]
+
+
+def init_db() -> str:
+    """Create tables and return the shared secret used to hash IPs."""
     with db() as c:
-        c.execute("PRAGMA journal_mode=WAL")
-        c.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS polls (
-                id          TEXT PRIMARY KEY,
-                question    TEXT NOT NULL,
-                options     TEXT NOT NULL,
-                admin_token TEXT NOT NULL,
-                strict_ip   INTEGER NOT NULL DEFAULT 1,
-                closed      INTEGER NOT NULL DEFAULT 0,
-                created_at  INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS votes (
-                poll_id    TEXT NOT NULL,
-                option_idx INTEGER NOT NULL,
-                voter_id   TEXT NOT NULL,
-                ip_hash    TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                UNIQUE (poll_id, voter_id)
-            );
-            CREATE INDEX IF NOT EXISTS votes_poll_ip ON votes (poll_id, ip_hash);
-            """
-        )
+        if IS_PG:
+            c.q("SELECT pg_advisory_lock(727001)")  # replicas may boot at the same time
+        else:
+            c.q("PRAGMA journal_mode=WAL")
+        try:
+            for stmt in SCHEMA:
+                c.q(stmt)
+            # One secret shared by every replica, generated on first boot.
+            c.q(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
+                ("ip_secret", secrets.token_hex(32)),
+            )
+            secret = c.one("SELECT value FROM settings WHERE key = ?", ("ip_secret",))["value"]
+        finally:
+            if IS_PG:
+                c.q("SELECT pg_advisory_unlock(727001)")
+    return os.environ.get("SECRET_KEY") or secret
 
 
-init_db()
+SECRET = init_db()
 
 
 # ---------- helpers ----------
 
 def client_ip(req: Request) -> str:
-    if TRUST_PROXY:
-        fwd = req.headers.get("x-forwarded-for")
+    if PROXY_HOPS > 0:
+        fwd = [p.strip() for p in req.headers.get("x-forwarded-for", "").split(",") if p.strip()]
         if fwd:
-            return fwd.split(",")[0].strip()
+            return fwd[-PROXY_HOPS] if len(fwd) >= PROXY_HOPS else fwd[0]
     return req.client.host if req.client else "unknown"
 
 
@@ -98,22 +176,40 @@ def new_id(n: int = 6) -> str:
     return "".join(secrets.choice(ID_ALPHABET) for _ in range(n))
 
 
-def get_poll(c: sqlite3.Connection, poll_id: str) -> sqlite3.Row:
-    row = c.execute("SELECT * FROM polls WHERE id = ?", (poll_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Poll not found")
-    return row
+_cache: dict[str, tuple[float, dict]] = {}
 
 
-def counts_for(c: sqlite3.Connection, poll_id: str, n_options: int) -> list[int]:
-    counts = [0] * n_options
-    for r in c.execute(
-        "SELECT option_idx, COUNT(*) AS n FROM votes WHERE poll_id = ? GROUP BY option_idx",
-        (poll_id,),
-    ):
-        if 0 <= r["option_idx"] < n_options:
-            counts[r["option_idx"]] = r["n"]
-    return counts
+def poll_state(poll_id: str, fresh: bool = False) -> dict:
+    """Public poll data + counts, cached briefly so thousands of viewers polling
+    for live results don't each hit the database."""
+    now = time.monotonic()
+    hit = _cache.get(poll_id)
+    if hit and not fresh and now - hit[0] < CACHE_TTL:
+        return hit[1]
+    with db() as c:
+        p = c.one("SELECT id, question, options, closed FROM polls WHERE id = ?", (poll_id,))
+        if not p:
+            raise HTTPException(404, "Poll not found")
+        options = json.loads(p["options"])
+        counts = [0] * len(options)
+        for r in c.all(
+            "SELECT option_idx, COUNT(*) AS n FROM votes WHERE poll_id = ? GROUP BY option_idx",
+            (poll_id,),
+        ):
+            if 0 <= r["option_idx"] < len(options):
+                counts[r["option_idx"]] = int(r["n"])
+    state = {
+        "id": p["id"],
+        "question": p["question"],
+        "options": options,
+        "counts": counts,
+        "total": sum(counts),
+        "closed": bool(p["closed"]),
+    }
+    if len(_cache) > 10000:
+        _cache.clear()
+    _cache[poll_id] = (now, state)
+    return state
 
 
 _create_log: dict[str, deque] = defaultdict(deque)
@@ -142,9 +238,13 @@ async def voter_cookie(request: Request, call_next):
     if fresh:
         response.set_cookie(
             "vid", vid, max_age=60 * 60 * 24 * 365 * 2, httponly=True, samesite="lax",
-            secure=request.url.scheme == "https",
+            secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
         )
     return response
+
+
+def no_store(data: dict) -> JSONResponse:
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 # ---------- API ----------
@@ -169,101 +269,104 @@ def create_poll(body: CreatePoll, request: Request):
     if rate_limited(client_ip(request)):
         raise HTTPException(429, "Slow down - too many polls created. Try again later.")
     question = body.question.strip()
-    options = [o.strip()[:MAX_OPTION] for o in body.options if o.strip()]
-    # drop duplicates, keep order
-    seen, uniq = set(), []
-    for o in options:
-        if o.lower() not in seen:
+    seen, options = set(), []
+    for o in body.options:
+        o = o.strip()[:MAX_OPTION]
+        if o and o.lower() not in seen:
             seen.add(o.lower())
-            uniq.append(o)
+            options.append(o)
     if not question:
         raise HTTPException(400, "Question is required")
-    if not 2 <= len(uniq) <= MAX_OPTIONS:
+    if not 2 <= len(options) <= MAX_OPTIONS:
         raise HTTPException(400, f"Need between 2 and {MAX_OPTIONS} different options")
 
     token = secrets.token_urlsafe(24)
-    with _db_lock, db() as c:
-        for _ in range(10):
-            pid = new_id()
-            try:
-                c.execute(
+    for _ in range(10):
+        pid = new_id()
+        try:
+            with db() as c:
+                c.q(
                     "INSERT INTO polls (id, question, options, admin_token, strict_ip, created_at)"
                     " VALUES (?, ?, ?, ?, ?, ?)",
-                    (pid, question, json.dumps(uniq), token, int(body.strict_ip), int(time.time())),
+                    (pid, question, json.dumps(options), token, int(body.strict_ip), int(time.time())),
                 )
-                break
-            except sqlite3.IntegrityError:
-                continue
-        else:
-            raise HTTPException(500, "Could not allocate poll id")
-    return {"id": pid, "admin_token": token}
+            return {"id": pid, "admin_token": token}
+        except IntegrityError:
+            continue
+    raise HTTPException(500, "Could not allocate poll id")
 
 
 @app.get("/api/polls/{poll_id}")
-def read_poll(poll_id: str, request: Request):
+def read_poll(poll_id: str, request: Request, me: int = 0):
+    """me=1 also returns which option this browser voted for (one extra query).
+    Live-result polling leaves it off so it's served from cache."""
+    state = poll_state(poll_id)
+    if not me:
+        return no_store(state)
     with db() as c:
-        p = get_poll(c, poll_id)
-        options = json.loads(p["options"])
-        counts = counts_for(c, poll_id, len(options))
-        mine = c.execute(
+        mine = c.one(
             "SELECT option_idx FROM votes WHERE poll_id = ? AND voter_id = ?",
             (poll_id, request.state.vid),
-        ).fetchone()
-    return JSONResponse(
-        {
-            "id": p["id"],
-            "question": p["question"],
-            "options": options,
-            "counts": counts,
-            "total": sum(counts),
-            "closed": bool(p["closed"]),
-            "voted": mine["option_idx"] if mine else None,
-        },
-        headers={"Cache-Control": "no-store"},
-    )
+        )
+    return no_store({**state, "voted": mine["option_idx"] if mine else None})
 
 
 @app.post("/api/polls/{poll_id}/vote")
 def vote(poll_id: str, body: Vote, request: Request):
     vid = request.state.vid
-    with _db_lock, db() as c:
-        p = get_poll(c, poll_id)
-        options = json.loads(p["options"])
-        if p["closed"]:
-            raise HTTPException(410, "Voting is closed")
-        if not 0 <= body.option < len(options):
-            raise HTTPException(400, "Invalid option")
-        h = ip_hash(poll_id, client_ip(request))
-        c.execute("BEGIN IMMEDIATE")
-        try:
-            if c.execute(
-                "SELECT 1 FROM votes WHERE poll_id = ? AND voter_id = ?", (poll_id, vid)
-            ).fetchone():
-                raise HTTPException(409, "You already voted in this poll")
-            if p["strict_ip"] and c.execute(
-                "SELECT 1 FROM votes WHERE poll_id = ? AND ip_hash = ?", (poll_id, h)
-            ).fetchone():
-                raise HTTPException(409, "Someone on your network already voted in this poll")
-            c.execute(
-                "INSERT INTO votes (poll_id, option_idx, voter_id, ip_hash, created_at)"
+    with db() as c:
+        p = c.one("SELECT options, closed, strict_ip FROM polls WHERE id = ?", (poll_id,))
+    if not p:
+        raise HTTPException(404, "Poll not found")
+    if p["closed"]:
+        raise HTTPException(410, "Voting is closed")
+    if not 0 <= body.option < len(json.loads(p["options"])):
+        raise HTTPException(400, "Invalid option")
+
+    ip_key = ip_hash(poll_id, client_ip(request)) if p["strict_ip"] else None
+    try:
+        with db() as c:
+            c.q(
+                "INSERT INTO votes (poll_id, option_idx, voter_id, ip_key, created_at)"
                 " VALUES (?, ?, ?, ?, ?)",
-                (poll_id, body.option, vid, h, int(time.time())),
+                (poll_id, body.option, vid, ip_key, int(time.time())),
             )
-            c.execute("COMMIT")
-        except Exception:
-            c.execute("ROLLBACK")
-            raise
-    return read_poll(poll_id, request)
+    except IntegrityError:
+        with db() as c:
+            same_browser = c.one(
+                "SELECT 1 AS x FROM votes WHERE poll_id = ? AND voter_id = ?", (poll_id, vid)
+            )
+        if same_browser:
+            raise HTTPException(409, "You already voted in this poll")
+        raise HTTPException(409, "Someone on your network already voted in this poll")
+
+    return no_store({**poll_state(poll_id, fresh=True), "voted": body.option})
 
 
 @app.post("/api/polls/{poll_id}/admin")
 def admin(poll_id: str, body: Admin):
-    with _db_lock, db() as c:
-        p = get_poll(c, poll_id)
+    with db() as c:
+        p = c.one("SELECT admin_token FROM polls WHERE id = ?", (poll_id,))
+        if not p:
+            raise HTTPException(404, "Poll not found")
         if not hmac.compare_digest(p["admin_token"], body.admin_token):
             raise HTTPException(403, "Not your poll")
-        c.execute("UPDATE polls SET closed = ? WHERE id = ?", (int(body.closed), poll_id))
+        c.q("UPDATE polls SET closed = ? WHERE id = ?", (int(body.closed), poll_id))
+    _cache.pop(poll_id, None)
     return {"ok": True, "closed": body.closed}
+
+
+if DEBUG_IP:
+    @app.get("/api/debug/ip")
+    def debug_ip(request: Request):
+        """Temporary: set DEBUG_IP=1 to check which IP the app sees behind the proxy."""
+        return {
+            "chosen_ip": client_ip(request),
+            "proxy_hops": PROXY_HOPS,
+            "socket_ip": request.client.host if request.client else None,
+            "x_forwarded_for": request.headers.get("x-forwarded-for"),
+            "x_real_ip": request.headers.get("x-real-ip"),
+        }
 
 
 # ---------- pages ----------
@@ -285,7 +388,7 @@ def overlay_page(poll_id: str):
 
 @app.get("/healthz")
 def health():
-    return {"ok": True}
+    return {"ok": True, "db": "postgres" if IS_PG else "sqlite"}
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

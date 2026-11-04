@@ -17,14 +17,21 @@ python -m uvicorn app:app --reload
 ```
 Then open http://localhost:8000
 
-## Deploy
-Any host that runs Docker or Python works (Fly.io, Railway, Render, a VPS).
+## Deploy (FastAPI Cloud)
+The app is hosted on FastAPI Cloud, connected to this repo. FastAPI Cloud runs several replicas and has no persistent disk, so production **must** use Postgres:
+
+1. In the app's dashboard, open **Integrations** and connect **Neon**. This sets `DATABASE_URL`.
+2. Redeploy. `/healthz` should then report `"db": "postgres"`.
+
+Tables and the IP-hashing secret are created automatically on first boot. Vote limits are enforced by database constraints, so they hold across all replicas.
 
 Environment variables:
 | Var | Purpose |
 |---|---|
-| `SECRET_KEY` | **Set this in production.** Used to hash IPs. If it changes, the IP check stops recognizing earlier voters. |
-| `DB_PATH` | SQLite file path. Put it on a persistent volume (`/data/polls.db` in Docker). |
-| `TRUST_PROXY` | `1` when behind a proxy/load balancer so the real client IP is used (already set in the Dockerfile). |
+| `DATABASE_URL` | Postgres connection string. Without it the app uses a local SQLite file (`DB_PATH`), which is for development only. |
+| `PROXY_HOPS` | Number of proxies in front of the app, used to find the real client IP in `X-Forwarded-For`. Defaults to `1` on FastAPI Cloud and `0` locally. |
+| `DEBUG_IP` | Set to `1` temporarily to enable `/api/debug/ip`, which shows the IP the app sees. Use it to check `PROXY_HOPS`. |
+| `SECRET_KEY` | Optional override for the IP-hashing secret (one is otherwise stored in the database). |
+| `DB_POOL_SIZE` | Postgres connections per replica (default 10). |
 
-Run as a **single instance** with a persistent disk, because SQLite plus the in-process lock assumes one process.
+A Dockerfile is also included for hosts like Fly.io, Railway or Render.

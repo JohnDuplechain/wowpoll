@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WowPoll: Instant polls for streamers</title>
+  <meta name="description" content="Make a poll in seconds. Share the link. Everyone votes once.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="wrap">
+    <a class="brand" href="/"><span class="dot"></span>WowPoll</a>
+    <h1>Ask your chat anything.</h1>
+    <p class="sub">Make a poll in seconds, drop the link, and everyone gets one vote.</p>
+
+    <form id="form" class="card" autocomplete="off">
+      <label class="field-label" for="q">Question</label>
+      <input id="q" class="question" type="text" maxlength="200" placeholder="What game should we play next?" required autofocus>
+
+      <label class="field-label" style="margin-top:20px">Options</label>
+      <div id="opts" class="options"></div>
+
+      <label class="toggle">
+        <input id="strict" type="checkbox" checked>
+        <span><b>One vote per network</b><br>Stops people voting twice with incognito tabs. Turn off if lots of voters share Wi-Fi (schools, offices).</span>
+      </label>
+
+      <button id="create" class="btn primary big" type="submit">Create poll</button>
+      <p id="err" class="error"></p>
+    </form>
+
+    <section id="share" class="share card">
+      <label class="field-label">Your poll is live. Share this link:</label>
+      <div class="linkbox">
+        <input id="link" type="text" readonly>
+        <button class="btn primary" id="copyLink" type="button">Copy</button>
+      </div>
+      <div class="row">
+        <a class="btn" id="openPoll" href="#">Open poll</a>
+        <button class="btn" id="copyOverlay" type="button">Copy OBS overlay URL</button>
+        <button class="btn" id="another" type="button">New poll</button>
+      </div>
+    </section>
+
+    <section id="recent" class="recent" hidden>
+      <h2>Your recent polls</h2>
+      <div id="recentList"></div>
+    </section>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script>
+    const MAX = 10;
+    const optsEl = $("#opts");
+
+    function addOption(value = "") {
+      if (optsEl.children.length >= MAX) return;
+      const row = document.createElement("div");
+      row.className = "opt-row";
+      row.innerHTML = `<span class="num"></span><input type="text" maxlength="80"><button type="button" class="x" title="Remove" aria-label="Remove option">&times;</button>`;
+      const input = row.querySelector("input");
+      input.value = value;
+      input.addEventListener("input", syncOptions);
+      input.addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const next = row.nextElementSibling?.querySelector("input");
+          if (next) next.focus(); else $("#create").focus();
+        }
+      });
+      row.querySelector(".x").addEventListener("click", () => {
+        if (optsEl.children.length > 2) { row.remove(); syncOptions(); }
+        else { input.value = ""; input.focus(); }
+      });
+      optsEl.appendChild(row);
+      renumber();
+    }
+
+    function renumber() {
+      [...optsEl.children].forEach((r, i) => {
+        r.querySelector(".num").textContent = i + 1;
+        r.querySelector("input").placeholder = i < 2 ? `Option ${i + 1}` : "Add another option";
+      });
+    }
+
+    // Always keep exactly one empty slot at the end (until the max).
+    function syncOptions() {
+      const rows = [...optsEl.children];
+      const last = rows[rows.length - 1];
+      if (last.querySelector("input").value.trim() && rows.length < MAX) addOption();
+      // collapse extra trailing empty rows (keep at least 2)
+      let rs = [...optsEl.children];
+      while (rs.length > 2 && !rs[rs.length - 1].querySelector("input").value.trim()
+             && !rs[rs.length - 2].querySelector("input").value.trim()
+             && document.activeElement !== rs[rs.length - 1].querySelector("input")) {
+        rs[rs.length - 1].remove(); rs = [...optsEl.children];
+      }
+      renumber();
+    }
+
+    function resetForm() {
+      $("#form").reset();
+      $("#strict").checked = true;
+      optsEl.innerHTML = "";
+      addOption(); addOption();
+      $("#err").textContent = "";
+      $("#form").hidden = false;
+      $("#share").classList.remove("show");
+      $("#q").focus();
+    }
+
+    $("#form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const question = $("#q").value.trim();
+      const options = [...optsEl.querySelectorAll("input")].map(i => i.value.trim()).filter(Boolean);
+      $("#err").textContent = "";
+      if (!question) return ($("#err").textContent = "Add a question first.");
+      if (options.length < 2) return ($("#err").textContent = "Add at least two options.");
+      const btn = $("#create");
+      btn.disabled = true; btn.textContent = "Creating…";
+      try {
+        const { id, admin_token } = await api("/api/polls", {
+          method: "POST",
+          body: JSON.stringify({ question, options, strict_ip: $("#strict").checked }),
+        });
+        MyPolls.save(id, { token: admin_token, question, created: Date.now() });
+        showShare(id);
+      } catch (err) {
+        $("#err").textContent = err.message;
+      } finally {
+        btn.disabled = false; btn.textContent = "Create poll";
+      }
+    });
+
+    function showShare(id) {
+      const url = `${location.origin}/p/${id}`;
+      $("#link").value = url;
+      $("#openPoll").href = `/p/${id}`;
+      $("#copyLink").onclick = () => copy(url, "Link copied!");
+      $("#copyOverlay").onclick = () => copy(`${url}/overlay`, "Overlay URL copied! Add it as a Browser Source in OBS.");
+      $("#form").hidden = true;
+      $("#share").classList.add("show");
+      $("#link").select();
+      copy(url, "Link copied!");
+      renderRecent();
+    }
+
+    $("#another").addEventListener("click", resetForm);
+    $("#link").addEventListener("focus", e => e.target.select());
+
+    function renderRecent() {
+      const all = Object.entries(MyPolls.all()).sort((a, b) => b[1].created - a[1].created).slice(0, 8);
+      $("#recent").hidden = !all.length;
+      $("#recentList").innerHTML = all.map(([id, p]) => `<a href="/p/${id}">${esc(p.question)}</a>`).join("");
+    }
+
+    resetForm();
+    renderRecent();
+  </script>
+</body>
+</html>

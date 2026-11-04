@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Poll · WowPoll</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="wrap">
+    <a class="brand" href="/"><span class="dot"></span>WowPoll</a>
+    <div id="app"><p class="center">Loading poll…</p></div>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script>
+    const id = location.pathname.split("/")[2];
+    const mine = MyPolls.get(id);
+    let poll = null, timer = null, wantResults = false;
+
+    function shell() {
+      $("#app").innerHTML = `
+        <h1 id="question"></h1>
+        <p class="sub" id="hint"></p>
+        <div class="card">
+          <div id="body"></div>
+          <div class="meta">
+            <span id="total"></span>
+            <span id="status"></span>
+          </div>
+        </div>
+        <p class="error" id="err"></p>
+        ${mine ? `
+        <div class="card admin">
+          <h3>You made this poll</h3>
+          <div class="row">
+            <button class="btn small primary" id="copyLink">Copy link</button>
+            <button class="btn small" id="copyOverlay">Copy OBS overlay URL</button>
+            <button class="btn small" id="toggle"></button>
+          </div>
+        </div>` : ""}`;
+      if (mine) {
+        const url = `${location.origin}/p/${id}`;
+        $("#copyLink").onclick = () => copy(url, "Link copied!");
+        $("#copyOverlay").onclick = () => copy(`${url}/overlay`, "Overlay URL copied!");
+        $("#toggle").onclick = toggleClosed;
+      }
+    }
+
+    function render() {
+      document.title = `${poll.question} · WowPoll`;
+      $("#question").textContent = poll.question;
+      const canVote = poll.voted === null && !poll.closed && !wantResults;
+      $("#hint").textContent = poll.closed ? "Voting has ended. Final results:"
+        : poll.voted !== null ? "Thanks for voting! Results update live."
+        : canVote ? "Pick one. You only get one vote." : "Live results";
+
+      const body = $("#body");
+      if (canVote) {
+        if (!body.querySelector(".vote-list")) {
+          body.innerHTML = `<div class="vote-list">${poll.options.map((o, i) =>
+            `<button class="vote-btn" data-i="${i}">${esc(o)}</button>`).join("")}</div>
+            <p style="margin:14px 0 0;text-align:center"><a href="#" id="peek" style="font-size:14px;color:var(--muted)">View results</a></p>`;
+          body.querySelectorAll(".vote-btn").forEach(b => b.onclick = () => castVote(+b.dataset.i));
+          $("#peek").onclick = e => { e.preventDefault(); wantResults = true; render(); };
+        }
+      } else {
+        if (!body.querySelector(".results")) body.innerHTML = `<div class="results"></div>`;
+        renderResults(body.querySelector(".results"), poll);
+      }
+
+      $("#total").textContent = `${poll.total.toLocaleString()} vote${poll.total === 1 ? "" : "s"}`;
+      $("#status").innerHTML = poll.closed
+        ? `<span class="pill closed">Closed</span>`
+        : `<span class="pill"><span class="live"></span>Live</span>`;
+      if (mine) $("#toggle").textContent = poll.closed ? "Reopen voting" : "Close voting";
+    }
+
+    async function load() {
+      try {
+        poll = await api(`/api/polls/${id}`);
+        if (!$("#question")) shell();
+        render();
+      } catch (err) {
+        if (err.status === 404) {
+          clearInterval(timer);
+          $("#app").innerHTML = `<h1>Poll not found</h1><p class="sub">This link may be wrong or the poll was removed.</p><a class="btn primary" href="/">Make a poll</a>`;
+        }
+      }
+    }
+
+    async function castVote(i) {
+      document.querySelectorAll(".vote-btn").forEach(b => b.disabled = true);
+      $("#err").textContent = "";
+      try {
+        poll = await api(`/api/polls/${id}/vote`, { method: "POST", body: JSON.stringify({ option: i }) });
+        $("#body").innerHTML = "";
+        render();
+      } catch (err) {
+        $("#err").textContent = err.message;
+        if (err.status === 409 || err.status === 410) { wantResults = true; await load(); }
+        else document.querySelectorAll(".vote-btn").forEach(b => b.disabled = false);
+      }
+    }
+
+    async function toggleClosed() {
+      try {
+        await api(`/api/polls/${id}/admin`, {
+          method: "POST",
+          body: JSON.stringify({ admin_token: mine.token, closed: !poll.closed }),
+        });
+        await load();
+        toast(poll.closed ? "Voting closed" : "Voting reopened");
+      } catch (err) { $("#err").textContent = err.message; }
+    }
+
+    load();
+    timer = setInterval(() => { if (!document.hidden) load(); }, 2500);
+  </script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Poll Overlay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Space+Grotesk:wght@600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* Transparent background for OBS Browser Source. Add ?bg=1 for a solid panel. */
+    html, body { background: transparent !important; min-height: 0; }
+    body { padding: 16px; text-shadow: 0 2px 6px rgba(0, 0, 0, .6); }
+    .ov { max-width: 560px; }
+    body.solid .ov { background: rgba(13, 11, 20, .88); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+    .ov h1 { font-size: 28px; margin-bottom: 14px; }
+    .ov .res { background: rgba(23, 20, 31, .75); }
+    .ov .foot { margin-top: 12px; display: flex; justify-content: space-between; font-weight: 600; font-size: 15px; }
+    .ov .foot .url { color: var(--accent-2); }
+  </style>
+</head>
+<body>
+  <div class="ov">
+    <h1 id="q"></h1>
+    <div class="results" id="res"></div>
+    <div class="foot"><span class="url" id="url"></span><span id="total"></span></div>
+  </div>
+  <script src="/static/common.js"></script>
+  <script>
+    const id = location.pathname.split("/")[2];
+    if (new URLSearchParams(location.search).has("bg")) document.body.classList.add("solid");
+    $("#url").textContent = `${location.host}/p/${id}`;
+    async function load() {
+      try {
+        const p = await api(`/api/polls/${id}`);
+        p.voted = null; // never highlight a "your vote" on stream
+        $("#q").textContent = p.question;
+        renderResults($("#res"), p);
+        $("#total").textContent = p.closed ? `Final · ${p.total.toLocaleString()} votes` : `${p.total.toLocaleString()} votes`;
+      } catch {}
+    }
+    load();
+    setInterval(load, 2000);
+  </script>
+</body>
+</html>

@@ -10,6 +10,12 @@ Dead-simple polls for streamers. Type a question and options, hit **Create**, an
 - The creator can close or reopen voting from the poll page. The admin token is kept in their browser.
 - IPs are stored only as salted HMAC hashes.
 
+## Tier lists
+- `/tier` builds a tier list from quick-add sets (classes, races, professions, raid bosses…), a search over about 9,900 WoW icons, or plain text items.
+- Viewers (`/t/<id>`) rank each item into S–F once per browser. The community result puts each item in the tier nearest its average placement and updates live.
+- OBS overlay at `/t/<id>/overlay` (`?bg=1` for a solid panel).
+- Icons in `static/wow-icons/` are converted from the [forever-icons](https://github.com/hastecraft/forever-icons) black-frame pack by `tools/build_wow_icons.py`. The art is © Blizzard Entertainment and is used as fan content; WowPoll is unofficial and non-commercial.
+
 ## Run locally
 ```
 pip install -r requirements.txt

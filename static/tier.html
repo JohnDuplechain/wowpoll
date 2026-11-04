@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tier List · WowPoll</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Open+Sans:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/static/icons/site.webmanifest">
+  <meta name="theme-color" content="#4f3f27">
+  <meta property="og:title" content="Rank it on WowPoll">
+  <meta property="og:description" content="You've been asked to rank a tier list. One ranking each. The community result updates live.">
+  <meta property="og:image" content="https://wowpoll.com/static/icons/android-chrome-512x512.png">
+</head>
+<body>
+  <main class="wrap wide">
+    <header class="topbar">
+      <a class="brand" href="/"><img class="logo" src="/static/icons/android-chrome-192x192.png" alt="" width="52" height="52">WowPoll</a>
+      <nav class="tabs"><a href="/">Poll</a><a href="/tier" class="active">Tier List</a></nav>
+    </header>
+    <div id="app"><p class="center">Loading tier list…</p></div>
+    <p class="fan-note">WoW icons © Blizzard Entertainment. WowPoll is an unofficial fan site, not affiliated with or endorsed by Blizzard.</p>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script>
+    const id = location.pathname.split("/")[2];
+    const mineAdmin = (MyPolls.get(id) || {}).kind === "tier" ? MyPolls.get(id) : null;
+    let list = null;          // server state
+    let mine = undefined;     // my submitted placements {itemIdx: tierIdx} or null
+    let draft = {};           // placements while ranking
+    let sel = null;           // selected item index (tap-to-place)
+    let view = "vote";        // vote | community | mine
+    let lastSig = "";
+
+    function shell() {
+      $("#app").innerHTML = `
+        <h1 id="title"></h1>
+        <p class="sub" id="hint"></p>
+        <div class="card">
+          <div id="seg"></div>
+          <div id="board"></div>
+          <div class="meta"><span id="total"></span><span id="status"></span></div>
+          <div id="actions"></div>
+        </div>
+        <p class="error" id="err"></p>
+        ${mineAdmin ? `
+        <div class="card admin">
+          <h3>You made this tier list</h3>
+          <div class="row">
+            <button class="btn small primary" id="copyLink">Copy link</button>
+            <button class="btn small" id="copyOverlay">Copy OBS overlay URL</button>
+            <button class="btn small" id="toggle"></button>
+          </div>
+        </div>` : ""}`;
+      if (mineAdmin) {
+        const url = `${location.origin}/t/${id}`;
+        $("#copyLink").onclick = () => copy(url, "Link copied!");
+        $("#copyOverlay").onclick = () => copy(`${url}/overlay`, "Overlay URL copied!");
+        $("#toggle").onclick = toggleClosed;
+      }
+    }
+
+    // Build rows of tiles from a placement map {itemIdx: tierIdx}
+    function boardHTML(placement, { interactive, order }) {
+      const rows = list.tiers.map((t, ti) => {
+        const idx = order.filter(i => placement[i] === ti);
+        return `<div class="tier-row ${interactive ? "target" : ""}" data-tier="${ti}">
+          <div class="tier-label ${TIER_CLASSES[ti] || ""}">${esc(t)}</div>
+          <div class="tier-items">${idx.map(i => tileHTML(list.items[i], i, (interactive ? "" : "static") + (sel === i ? " sel" : ""))).join("")}</div>
+        </div>`;
+      }).join("");
+      const rest = order.filter(i => placement[i] === undefined);
+      const pool = (interactive || rest.length) ? `
+        <div class="pool ${interactive ? "target" : ""}" data-tier="-1">
+          <div class="pool-head">${interactive ? "Unranked — drag or tap an item, then tap a tier" : "No votes yet"}</div>
+          <div class="tier-items">${rest.map(i => tileHTML(list.items[i], i, (interactive ? "" : "static") + (sel === i ? " sel" : ""))).join("")}</div>
+        </div>` : "";
+      return `<div class="board">${rows}</div>${pool}`;
+    }
+
+    function communityPlacement() {
+      const p = {};
+      list.results.forEach((r, i) => { if (r) p[i] = r.tier; });
+      return p;
+    }
+    function communityOrder() {
+      // best average first inside each tier; unvoted at the end
+      return list.items.map((_, i) => i).sort((a, b) =>
+        (list.results[a] ? list.results[a].avg : 99) - (list.results[b] ? list.results[b].avg : 99));
+    }
+
+    function render(force = false) {
+      document.title = `${list.title} · WowPoll`;
+      $("#title").textContent = list.title;
+      const canVote = mine === null && !list.closed;
+      if (!canVote && view === "vote") view = "community";
+
+      $("#hint").textContent =
+        view === "vote" ? "Drop each item into a tier, then submit. You get one ranking."
+        : list.closed ? "Ranking has ended. Final community tier list:"
+        : mine ? "Thanks for ranking! The community tier list updates live."
+        : "Live community tier list";
+
+      $("#seg").innerHTML = mine ? `<div class="seg">
+          <button data-v="community" class="${view === "community" ? "on" : ""}">Community</button>
+          <button data-v="mine" class="${view === "mine" ? "on" : ""}">Your ranking</button></div>` : "";
+      $("#seg").querySelectorAll("button").forEach(b => b.onclick = () => { view = b.dataset.v; render(true); });
+
+      let html;
+      if (view === "vote") html = boardHTML(draft, { interactive: true, order: list.items.map((_, i) => i) });
+      else if (view === "mine") html = boardHTML(Object.fromEntries(Object.entries(mine).map(([k, v]) => [+k, v])), { interactive: false, order: list.items.map((_, i) => i) });
+      else html = boardHTML(communityPlacement(), { interactive: false, order: communityOrder() });
+
+      // Avoid re-rendering (and flicker) when nothing changed
+      const sig = view + "|" + html;
+      if (force || sig !== lastSig) {
+        $("#board").innerHTML = html;
+        lastSig = sig;
+        if (view === "vote") wireBoard();
+        else decorateResults();
+      }
+
+      $("#total").textContent = `${list.voters.toLocaleString()} ranking${list.voters === 1 ? "" : "s"}`;
+      $("#status").innerHTML = list.closed
+        ? `<span class="pill closed">Closed</span>`
+        : `<span class="pill"><span class="live"></span>Live</span>`;
+
+      if (view === "vote") {
+        const n = Object.keys(draft).length;
+        $("#actions").innerHTML = `
+          <button class="btn primary big" id="submit" ${n ? "" : "disabled"}>Submit my ranking (${n}/${list.items.length} placed)</button>
+          <p style="margin:12px 0 0;text-align:center;font-size:14px">
+            <a href="#" id="peek" style="color:var(--muted)">View community results</a>
+            ${n ? ` · <a href="#" id="reset" style="color:var(--muted)">Start over</a>` : ""}</p>`;
+        $("#submit").onclick = submit;
+        $("#peek").onclick = e => { e.preventDefault(); view = "community"; render(true); };
+        if ($("#reset")) $("#reset").onclick = e => { e.preventDefault(); draft = {}; sel = null; render(true); };
+      } else {
+        $("#actions").innerHTML = mine === null && !list.closed
+          ? `<p style="margin:14px 0 0;text-align:center"><a href="#" id="back" style="color:var(--gold)">Rank it yourself →</a></p>` : "";
+        if ($("#back")) $("#back").onclick = e => { e.preventDefault(); view = "vote"; render(true); };
+      }
+      if (mineAdmin) $("#toggle").textContent = list.closed ? "Reopen ranking" : "Close ranking";
+    }
+
+    function decorateResults() {
+      if (view !== "community") return;
+      $("#board").querySelectorAll(".tile").forEach(t => {
+        const r = list.results[+t.dataset.i];
+        if (r) t.title = `${list.items[+t.dataset.i].name || ""} · avg ${list.tiers[Math.round(r.avg)] || ""} (${r.avg.toFixed(2)}) · ${r.votes} vote${r.votes === 1 ? "" : "s"}`;
+      });
+    }
+
+    function place(i, tier) {
+      if (tier < 0) delete draft[i]; else draft[i] = tier;
+      sel = null;
+      render(true);
+    }
+
+    function wireBoard() {
+      const board = $("#board");
+      board.querySelectorAll(".tile").forEach(t => {
+        const i = +t.dataset.i;
+        t.draggable = true;
+        t.addEventListener("click", e => { e.stopPropagation(); sel = sel === i ? null : i; render(true); });
+        t.addEventListener("dragstart", e => { sel = i; e.dataTransfer.setData("text/plain", String(i)); e.dataTransfer.effectAllowed = "move"; t.classList.add("dragging"); });
+        t.addEventListener("dragend", () => t.classList.remove("dragging"));
+      });
+      board.querySelectorAll("[data-tier]").forEach(row => {
+        const tier = +row.dataset.tier;
+        row.addEventListener("click", () => { if (sel !== null) place(sel, tier); });
+        row.addEventListener("dragover", e => { e.preventDefault(); row.classList.add("drag-over"); });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+        row.addEventListener("drop", e => {
+          e.preventDefault(); row.classList.remove("drag-over");
+          const i = parseInt(e.dataTransfer.getData("text/plain"), 10);
+          if (!Number.isNaN(i)) place(i, tier);
+        });
+      });
+    }
+
+    async function submit() {
+      $("#err").textContent = "";
+      const placements = Object.entries(draft).map(([item, tier]) => ({ item: +item, tier }));
+      $("#submit").disabled = true;
+      try {
+        list = await api(`/api/tierlists/${id}/vote`, { method: "POST", body: JSON.stringify({ placements }) });
+        mine = list.mine;
+        view = "community";
+        render(true);
+        toast("Ranking submitted!");
+      } catch (err) {
+        $("#err").textContent = err.message;
+        if (err.status === 409 || err.status === 410) { await load(true); }
+        else $("#submit").disabled = false;
+      }
+    }
+
+    async function load(withMe = false) {
+      try {
+        const first = !list;
+        const data = await api(`/api/tierlists/${id}${first || withMe ? "?me=1" : ""}`);
+        if (first || withMe) mine = data.mine;
+        list = data;
+        if (!$("#title")) shell();
+        render(first);
+      } catch (err) {
+        if (err.status === 404) {
+          clearInterval(timer);
+          $("#app").innerHTML = `<h1>Tier list not found</h1><p class="sub">This link may be wrong or the list was removed.</p><a class="btn primary" href="/tier">Make a tier list</a>`;
+        }
+      }
+    }
+
+    async function toggleClosed() {
+      try {
+        await api(`/api/tierlists/${id}/admin`, { method: "POST", body: JSON.stringify({ admin_token: mineAdmin.token, closed: !list.closed }) });
+        await load();
+        toast(list.closed ? "Ranking closed" : "Ranking reopened");
+      } catch (err) { $("#err").textContent = err.message; }
+    }
+
+    load();
+    // Only results views need live refresh; don't disturb someone mid-ranking.
+    const timer = setInterval(() => { if (!document.hidden && view !== "vote") load(); }, 3000);
+  </script>
+</body>
+</html>

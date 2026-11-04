@@ -19,7 +19,10 @@
 </head>
 <body>
   <main class="wrap">
-    <a class="brand" href="/"><img class="logo" src="/static/icons/android-chrome-192x192.png" alt="" width="52" height="52">WowPoll</a>
+    <header class="topbar">
+      <a class="brand" href="/"><img class="logo" src="/static/icons/android-chrome-192x192.png" alt="" width="52" height="52">WowPoll</a>
+      <nav class="tabs"><a href="/" class="active">Poll</a><a href="/tier">Tier List</a></nav>
+    </header>
     <h1>Ask your chat anything.</h1>
     <p class="sub">Make a poll in seconds, drop the link, and everyone gets one vote.</p>
 
@@ -48,7 +51,7 @@
     </section>
 
     <section id="recent" class="recent" hidden>
-      <h2>Your recent polls</h2>
+      <h2>Your recent polls &amp; tier lists</h2>
       <div id="recentList"></div>
     </section>
   </main>
@@ -152,11 +155,7 @@
     $("#another").addEventListener("click", resetForm);
     $("#link").addEventListener("focus", e => e.target.select());
 
-    function renderRecent() {
-      const all = Object.entries(MyPolls.all()).sort((a, b) => b[1].created - a[1].created).slice(0, 8);
-      $("#recent").hidden = !all.length;
-      $("#recentList").innerHTML = all.map(([id, p]) => `<a href="/p/${id}">${esc(p.question)}</a>`).join("");
-    }
+    function renderRecent() { renderRecentList($("#recent"), $("#recentList")); }
 
     resetForm();
     renderRecent();

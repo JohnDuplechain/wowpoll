@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tier List · WowPoll</title>
+  <meta name="description" content="Make a tier list, share the link, and let your chat rank it together.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Open+Sans:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/static/icons/site.webmanifest">
+  <meta name="theme-color" content="#4f3f27">
+  <meta property="og:title" content="WowPoll Tier Lists">
+  <meta property="og:description" content="Make a tier list and let your chat rank it together.">
+  <meta property="og:image" content="https://wowpoll.com/static/icons/android-chrome-512x512.png">
+</head>
+<body>
+  <main class="wrap wide">
+    <header class="topbar">
+      <a class="brand" href="/"><img class="logo" src="/static/icons/android-chrome-192x192.png" alt="" width="52" height="52">WowPoll</a>
+      <nav class="tabs"><a href="/">Poll</a><a href="/tier" class="active">Tier List</a></nav>
+    </header>
+    <h1>Let your chat rank it.</h1>
+    <p class="sub">Pick the items, share the link, and everyone drops them into tiers once. You get the community tier list live.</p>
+
+    <form id="form" class="card" autocomplete="off">
+      <label class="field-label" for="title">Title</label>
+      <input id="title" class="question" type="text" maxlength="120" placeholder="Rank the classes for raiding" required autofocus>
+
+      <label class="field-label" style="margin-top:22px">Quick add</label>
+      <div class="sets" id="sets"></div>
+
+      <label class="field-label" for="search">Search WoW icons</label>
+      <input id="search" type="text" placeholder="Try fire, mount, ragnaros, sword…">
+      <div class="picker" id="picker"></div>
+      <p class="picker-note" id="pickerNote"></p>
+
+      <label class="field-label" for="custom">Or add a text item</label>
+      <div class="inline">
+        <input id="custom" type="text" maxlength="40" placeholder="Anything: a dungeon, a streamer, a snack…">
+        <button class="btn" type="button" id="addCustom">Add</button>
+      </div>
+
+      <label class="field-label" style="margin-top:22px">Items <span class="count" id="count"></span></label>
+      <div class="item-list" id="items"></div>
+
+      <button id="create" class="btn primary big" type="submit">Create tier list</button>
+      <p id="err" class="error"></p>
+    </form>
+
+    <section id="share" class="share card">
+      <label class="field-label">Your tier list is live. Share this link:</label>
+      <div class="linkbox">
+        <input id="link" type="text" readonly>
+        <button class="btn primary" id="copyLink" type="button">Copy</button>
+      </div>
+      <div class="row">
+        <a class="btn" id="openList" href="#">Open tier list</a>
+        <button class="btn" id="copyOverlay" type="button">Copy OBS overlay URL</button>
+        <button class="btn" id="another" type="button">New tier list</button>
+      </div>
+    </section>
+
+    <section id="recent" class="recent" hidden>
+      <h2>Your recent polls &amp; tier lists</h2>
+      <div id="recentList"></div>
+    </section>
+
+    <p class="fan-note">WoW icons © Blizzard Entertainment. WowPoll is an unofficial fan site, not affiliated with or endorsed by Blizzard.</p>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script>
+    const MAX = 40;
+    let items = [];          // [{name, icon}]
+    let index = null;        // all icon slugs, loaded on first search
+
+    function renderItems() {
+      $("#count").textContent = `${items.length} / ${MAX}`;
+      $("#items").innerHTML = items.map((it, i) => `
+        <div class="item-row" data-i="${i}">
+          ${tileHTML({ ...it, name: "" }, i, "static")}
+          <input type="text" maxlength="40" value="${esc(it.name)}" placeholder="Name (optional)">
+          <button type="button" class="x" title="Remove" aria-label="Remove item">&times;</button>
+        </div>`).join("");
+      $("#items").querySelectorAll(".item-row").forEach(row => {
+        const i = +row.dataset.i;
+        row.querySelector("input").addEventListener("input", e => { items[i].name = e.target.value; });
+        row.querySelector(".x").addEventListener("click", () => { items.splice(i, 1); renderItems(); });
+      });
+    }
+
+    function addItem(name, icon) {
+      if (items.length >= MAX) { toast(`Max ${MAX} items`); return false; }
+      if (icon && items.some(it => it.icon === icon)) { toast("Already added"); return false; }
+      items.push({ name: (name || "").slice(0, 40), icon: icon || null });
+      renderItems();
+      return true;
+    }
+
+    // Quick-add sets
+    api("/static/wow-icons/sets.json").then(sets => {
+      $("#sets").innerHTML = Object.keys(sets).map(k =>
+        `<button type="button" class="btn small" data-set="${esc(k)}">+ ${esc(k)}</button>`).join("");
+      $("#sets").querySelectorAll("button").forEach(b => b.onclick = () => {
+        let added = 0;
+        for (const it of sets[b.dataset.set]) if (addItem(it.name, it.icon)) added++;
+        if (added) toast(`Added ${added} items`);
+      });
+    }).catch(() => {});
+
+    // Icon search
+    async function ensureIndex() {
+      if (!index) index = await api("/static/wow-icons/index.json");
+      return index;
+    }
+    let searchTimer;
+    $("#search").addEventListener("focus", ensureIndex, { once: true });
+    $("#search").addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(runSearch, 120);
+    });
+    async function runSearch() {
+      const q = $("#search").value.trim().toLowerCase();
+      if (q.length < 2) { $("#picker").innerHTML = ""; $("#pickerNote").textContent = ""; return; }
+      const terms = q.split(/\s+/);
+      const all = await ensureIndex();
+      const hits = [];
+      for (const s of all) {
+        const hay = s.replace(/[_-]/g, " ");
+        if (terms.every(t => hay.includes(t))) { hits.push(s); if (hits.length >= 120) break; }
+      }
+      $("#picker").innerHTML = hits.map(s =>
+        `<button type="button" data-s="${s}" title="${esc(iconLabel(s))}">${tileHTML({ icon: s, name: "" }, 0)}</button>`).join("");
+      $("#pickerNote").textContent = hits.length
+        ? `${hits.length >= 120 ? "Showing first 120" : hits.length + " found"}. Click an icon to add it.`
+        : "No icons match. Try a different word.";
+      $("#picker").querySelectorAll("button").forEach(b => b.onclick = () => {
+        if (addItem(iconLabel(b.dataset.s), b.dataset.s)) toast("Added");
+      });
+    }
+
+    // Custom text item
+    function addCustom() {
+      const v = $("#custom").value.trim();
+      if (!v) return;
+      if (addItem(v, null)) { $("#custom").value = ""; $("#custom").focus(); }
+    }
+    $("#addCustom").onclick = addCustom;
+    $("#custom").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } });
+    $("#search").addEventListener("keydown", e => { if (e.key === "Enter") e.preventDefault(); });
+
+    // Create
+    $("#form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const title = $("#title").value.trim();
+      $("#err").textContent = "";
+      if (!title) return ($("#err").textContent = "Add a title first.");
+      if (items.length < 2) return ($("#err").textContent = "Add at least two items.");
+      const btn = $("#create");
+      btn.disabled = true; btn.textContent = "Creating…";
+      try {
+        const { id, admin_token } = await api("/api/tierlists", {
+          method: "POST",
+          body: JSON.stringify({ title, items: items.map(it => ({ name: it.name.trim(), icon: it.icon })) }),
+        });
+        MyPolls.save(id, { token: admin_token, question: title, created: Date.now(), kind: "tier" });
+        showShare(id);
+      } catch (err) {
+        $("#err").textContent = err.message;
+      } finally {
+        btn.disabled = false; btn.textContent = "Create tier list";
+      }
+    });
+
+    function showShare(id) {
+      const url = `${location.origin}/t/${id}`;
+      $("#link").value = url;
+      $("#openList").href = `/t/${id}`;
+      $("#copyLink").onclick = () => copy(url, "Link copied!");
+      $("#copyOverlay").onclick = () => copy(`${url}/overlay`, "Overlay URL copied! Add it as a Browser Source in OBS.");
+      $("#form").hidden = true;
+      $("#share").classList.add("show");
+      copy(url, "Link copied!");
+      renderRecentList($("#recent"), $("#recentList"));
+    }
+
+    $("#another").onclick = () => {
+      items = []; renderItems();
+      $("#form").reset(); $("#form").hidden = false;
+      $("#share").classList.remove("show");
+      $("#picker").innerHTML = ""; $("#pickerNote").textContent = "";
+      $("#title").focus();
+    };
+    $("#link").addEventListener("focus", e => e.target.select());
+
+    renderItems();
+    renderRecentList($("#recent"), $("#recentList"));
+  </script>
+</body>
+</html>

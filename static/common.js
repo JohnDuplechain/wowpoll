@@ -57,6 +57,39 @@ async function copy(text, label = "Copied!") {
   toast(label);
 }
 
+// ---------- tier list helpers ----------
+const TIER_CLASSES = ["t0", "t1", "t2", "t3", "t4", "t5"];
+const iconUrl = slug => `/static/wow-icons/${slug}.webp`;
+
+// "achievement_boss_ragnaros" -> "Boss Ragnaros"
+function iconLabel(slug) {
+  return slug
+    .replace(/^(inv|spell|ability|achievement|trade|ui|classicon|item|icon)[_-]+/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, c => c.toUpperCase())
+    .trim()
+    .slice(0, 40);
+}
+
+function tileHTML(item, i, extra = "") {
+  const name = esc(item.name || "");
+  if (item.icon) {
+    return `<div class="tile ${extra}" data-i="${i}" title="${name}">` +
+      `<img src="${iconUrl(item.icon)}" alt="" loading="lazy">${name ? `<span class="cap">${name}</span>` : ""}</div>`;
+  }
+  return `<div class="tile text ${extra}" data-i="${i}" title="${name}"><span>${name}</span></div>`;
+}
+
+// Recent polls/tier lists created in this browser, newest first.
+function renderRecentList(section, list) {
+  const all = Object.entries(MyPolls.all()).sort((a, b) => b[1].created - a[1].created).slice(0, 8);
+  section.hidden = !all.length;
+  list.innerHTML = all.map(([id, p]) => {
+    const tier = p.kind === "tier";
+    return `<a href="/${tier ? "t" : "p"}/${id}">${tier ? "🏆 " : ""}${esc(p.question)}</a>`;
+  }).join("");
+}
+
 function renderResults(container, poll) {
   const max = Math.max(...poll.counts);
   const rows = poll.options.map((opt, i) => {

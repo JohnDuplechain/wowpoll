@@ -1,0 +1,234 @@
+{
+ "Classic classes": [
+  {
+   "name": "Warrior",
+   "icon": "classicon_warrior"
+  },
+  {
+   "name": "Paladin",
+   "icon": "classicon_paladin"
+  },
+  {
+   "name": "Hunter",
+   "icon": "classicon_hunter"
+  },
+  {
+   "name": "Rogue",
+   "icon": "classicon_rogue"
+  },
+  {
+   "name": "Priest",
+   "icon": "classicon_priest"
+  },
+  {
+   "name": "Shaman",
+   "icon": "classicon_shaman"
+  },
+  {
+   "name": "Mage",
+   "icon": "classicon_mage"
+  },
+  {
+   "name": "Warlock",
+   "icon": "classicon_warlock"
+  },
+  {
+   "name": "Druid",
+   "icon": "classicon_druid"
+  }
+ ],
+ "All classes": [
+  {
+   "name": "Warrior",
+   "icon": "classicon_warrior"
+  },
+  {
+   "name": "Paladin",
+   "icon": "classicon_paladin"
+  },
+  {
+   "name": "Hunter",
+   "icon": "classicon_hunter"
+  },
+  {
+   "name": "Rogue",
+   "icon": "classicon_rogue"
+  },
+  {
+   "name": "Priest",
+   "icon": "classicon_priest"
+  },
+  {
+   "name": "Death Knight",
+   "icon": "classicon_deathknight"
+  },
+  {
+   "name": "Shaman",
+   "icon": "classicon_shaman"
+  },
+  {
+   "name": "Mage",
+   "icon": "classicon_mage"
+  },
+  {
+   "name": "Warlock",
+   "icon": "classicon_warlock"
+  },
+  {
+   "name": "Monk",
+   "icon": "classicon_monk"
+  },
+  {
+   "name": "Druid",
+   "icon": "classicon_druid"
+  },
+  {
+   "name": "Demon Hunter",
+   "icon": "classicon_demonhunter"
+  },
+  {
+   "name": "Evoker",
+   "icon": "classicon_evoker"
+  }
+ ],
+ "Races": [
+  {
+   "name": "Human",
+   "icon": "achievement_character_human_male"
+  },
+  {
+   "name": "Dwarf",
+   "icon": "achievement_character_dwarf_male"
+  },
+  {
+   "name": "Night Elf",
+   "icon": "achievement_character_nightelf_female"
+  },
+  {
+   "name": "Gnome",
+   "icon": "achievement_character_gnome_male"
+  },
+  {
+   "name": "Draenei",
+   "icon": "achievement_character_draenei_female"
+  },
+  {
+   "name": "Orc",
+   "icon": "achievement_character_orc_male"
+  },
+  {
+   "name": "Undead",
+   "icon": "achievement_character_undead_male"
+  },
+  {
+   "name": "Tauren",
+   "icon": "achievement_character_tauren_male"
+  },
+  {
+   "name": "Troll",
+   "icon": "achievement_character_troll_male"
+  },
+  {
+   "name": "Blood Elf",
+   "icon": "achievement_character_bloodelf_female"
+  }
+ ],
+ "Professions": [
+  {
+   "name": "Alchemy",
+   "icon": "trade_alchemy"
+  },
+  {
+   "name": "Blacksmithing",
+   "icon": "trade_blacksmithing"
+  },
+  {
+   "name": "Enchanting",
+   "icon": "trade_engraving"
+  },
+  {
+   "name": "Engineering",
+   "icon": "trade_engineering"
+  },
+  {
+   "name": "Herbalism",
+   "icon": "trade_herbalism"
+  },
+  {
+   "name": "Leatherworking",
+   "icon": "trade_leatherworking"
+  },
+  {
+   "name": "Mining",
+   "icon": "trade_mining"
+  },
+  {
+   "name": "Skinning",
+   "icon": "inv_misc_pelt_wolf_01"
+  },
+  {
+   "name": "Tailoring",
+   "icon": "trade_tailoring"
+  },
+  {
+   "name": "Jewelcrafting",
+   "icon": "inv_misc_gem_01"
+  },
+  {
+   "name": "Inscription",
+   "icon": "inv_inscription_tradeskill01"
+  },
+  {
+   "name": "Cooking",
+   "icon": "inv_misc_food_15"
+  },
+  {
+   "name": "Fishing",
+   "icon": "trade_fishing"
+  },
+  {
+   "name": "First Aid",
+   "icon": "spell_holy_sealofsacrifice"
+  }
+ ],
+ "Classic raid bosses": [
+  {
+   "name": "Ragnaros",
+   "icon": "achievement_boss_ragnaros"
+  },
+  {
+   "name": "Onyxia",
+   "icon": "achievement_boss_onyxia"
+  },
+  {
+   "name": "Nefarian",
+   "icon": "achievement_dungeon_blackwingdescent_raid_nefarian"
+  },
+  {
+   "name": "Hakkar",
+   "icon": "achievement_boss_hakkar"
+  },
+  {
+   "name": "Ossirian",
+   "icon": "achievement_boss_ossiriantheunscarred"
+  },
+  {
+   "name": "C'Thun",
+   "icon": "achievement_boss_cthun"
+  },
+  {
+   "name": "Kel'Thuzad",
+   "icon": "achievement_boss_kelthuzad_01"
+  }
+ ],
+ "Factions": [
+  {
+   "name": "Alliance",
+   "icon": "ui_allianceicon"
+  },
+  {
+   "name": "Horde",
+   "icon": "ui_hordeicon"
+  }
+ ]
+}

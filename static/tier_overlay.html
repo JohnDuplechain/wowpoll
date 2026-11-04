@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tier List Overlay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Open+Sans:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <style>
+    /* Transparent background for an OBS Browser Source. Add ?bg=1 for a solid panel. */
+    html, body { background: transparent !important; min-height: 0; }
+    body::before { display: none; }
+    body { padding: 16px; }
+    .ov { max-width: 760px; }
+    body.solid .ov { background: rgba(8, 40, 56, .92); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+    .ov h1 { font-size: 28px; margin-bottom: 12px; }
+    .ov .tier-row { background: rgba(4, 28, 40, .78); }
+    .ov .foot { margin-top: 10px; display: flex; justify-content: space-between; font-weight: 600; font-size: 15px; text-shadow: 0 2px 6px rgba(0, 0, 0, .7); }
+    .ov .foot .url { color: var(--gold); }
+  </style>
+</head>
+<body>
+  <div class="ov">
+    <h1 id="t"></h1>
+    <div class="board" id="board"></div>
+    <div class="foot"><span class="url" id="url"></span><span id="total"></span></div>
+  </div>
+  <script src="/static/common.js"></script>
+  <script>
+    const id = location.pathname.split("/")[2];
+    if (new URLSearchParams(location.search).has("bg")) document.body.classList.add("solid");
+    $("#url").textContent = `Rank it: ${location.host}/t/${id}`;
+    let last = "";
+    async function load() {
+      try {
+        const l = await api(`/api/tierlists/${id}`);
+        $("#t").textContent = l.title;
+        const order = l.items.map((_, i) => i).sort((a, b) =>
+          (l.results[a] ? l.results[a].avg : 99) - (l.results[b] ? l.results[b].avg : 99));
+        const html = l.tiers.map((t, ti) => `
+          <div class="tier-row"><div class="tier-label ${TIER_CLASSES[ti] || ""}">${esc(t)}</div>
+          <div class="tier-items">${order.filter(i => l.results[i] && l.results[i].tier === ti)
+            .map(i => tileHTML(l.items[i], i, "static")).join("")}</div></div>`).join("");
+        if (html !== last) { $("#board").innerHTML = html; last = html; }
+        $("#total").textContent = `${l.closed ? "Final · " : ""}${l.voters.toLocaleString()} ranking${l.voters === 1 ? "" : "s"}`;
+      } catch {}
+    }
+    load();
+    setInterval(load, 3000);
+  </script>
+</body>
+</html>

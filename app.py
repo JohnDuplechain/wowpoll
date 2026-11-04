@@ -11,6 +11,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -120,6 +121,21 @@ class Conn:
     def all(self, sql: str, params: tuple = ()):
         return self.q(sql, params).fetchall()
 
+    @contextmanager
+    def tx(self):
+        """All-or-nothing block of writes."""
+        if IS_PG:
+            with self.raw.transaction():
+                yield
+        else:
+            self.q("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                self.q("ROLLBACK")
+                raise
+            self.q("COMMIT")
+
 
 def _dict_factory(cursor, row):
     return {d[0]: row[i] for i, d in enumerate(cursor.description)}
@@ -166,6 +182,31 @@ SCHEMA = [
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     )""",
+    # Tier lists: chat ranks items into tiers once each; results are average placement.
+    """CREATE TABLE IF NOT EXISTS tierlists (
+        id          TEXT PRIMARY KEY,
+        title       TEXT NOT NULL,
+        items       TEXT NOT NULL,
+        tiers       TEXT NOT NULL,
+        admin_token TEXT NOT NULL,
+        closed      INTEGER NOT NULL DEFAULT 0,
+        created_at  BIGINT NOT NULL
+    )""",
+    # One row per voter; the UNIQUE constraint is what enforces "one ranking each".
+    """CREATE TABLE IF NOT EXISTS tier_voters (
+        list_id    TEXT NOT NULL,
+        voter_id   TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        UNIQUE (list_id, voter_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS tier_placements (
+        list_id  TEXT NOT NULL,
+        voter_id TEXT NOT NULL,
+        item_idx INTEGER NOT NULL,
+        tier_idx INTEGER NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS tier_placements_list ON tier_placements (list_id, item_idx)",
+    "CREATE INDEX IF NOT EXISTS tier_placements_voter ON tier_placements (list_id, voter_id)",
 ]
 
 
@@ -415,6 +456,175 @@ def admin(poll_id: str, body: Admin):
     return {"ok": True, "closed": body.closed}
 
 
+# ---------- tier lists ----------
+
+DEFAULT_TIERS = ["S", "A", "B", "C", "D", "F"]
+MAX_TIER_ITEMS = 40
+MAX_ITEM_NAME = 40
+MAX_TITLE = 120
+ICON_RE = re.compile(r"^[a-z0-9_\-]{1,100}$")
+try:
+    ICONS = set(json.loads((STATIC / "wow-icons" / "index.json").read_text()))
+except FileNotFoundError:
+    ICONS = set()
+
+
+class TierItem(BaseModel):
+    name: str = Field(max_length=200)
+    icon: str | None = None
+
+
+class CreateTierList(BaseModel):
+    title: str = Field(min_length=1, max_length=MAX_TITLE)
+    items: list[TierItem]
+
+
+class Placement(BaseModel):
+    item: int
+    tier: int
+
+
+class TierVote(BaseModel):
+    placements: list[Placement]
+
+
+def tier_state(list_id: str, fresh: bool = False) -> dict:
+    """Public tier list + community result, cached briefly like poll_state."""
+    key = "t:" + list_id
+    now = time.monotonic()
+    hit = _cache.get(key)
+    if hit and not fresh and now - hit[0] < CACHE_TTL:
+        return hit[1]
+    with db() as c:
+        t = c.one("SELECT id, title, items, tiers, closed FROM tierlists WHERE id = ?", (list_id,))
+        if not t:
+            raise HTTPException(404, "Tier list not found")
+        items, tiers = json.loads(t["items"]), json.loads(t["tiers"])
+        stats = {
+            r["item_idx"]: (float(r["avg"]), int(r["n"]))
+            for r in c.all(
+                "SELECT item_idx, AVG(tier_idx * 1.0) AS avg, COUNT(*) AS n"
+                " FROM tier_placements WHERE list_id = ? GROUP BY item_idx",
+                (list_id,),
+            )
+        }
+        voters = int(c.one("SELECT COUNT(*) AS n FROM tier_voters WHERE list_id = ?", (list_id,))["n"])
+    results = []
+    for i in range(len(items)):
+        if i in stats:
+            avg, n = stats[i]
+            results.append({"avg": round(avg, 3), "votes": n,
+                            "tier": min(len(tiers) - 1, max(0, int(avg + 0.5)))})
+        else:
+            results.append(None)
+    state = {"id": t["id"], "title": t["title"], "items": items, "tiers": tiers,
+             "closed": bool(t["closed"]), "voters": voters, "results": results}
+    if len(_cache) > 10000:
+        _cache.clear()
+    _cache[key] = (now, state)
+    return state
+
+
+@app.post("/api/tierlists")
+def create_tierlist(body: CreateTierList, request: Request):
+    if rate_limited(client_ip(request)):
+        raise HTTPException(429, "Slow down - too many lists created. Try again later.")
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(400, "Title is required")
+    items, seen = [], set()
+    for it in body.items:
+        name = it.name.strip()[:MAX_ITEM_NAME]
+        icon = (it.icon or "").strip().lower() or None
+        if icon is not None and (not ICON_RE.match(icon) or (ICONS and icon not in ICONS)):
+            icon = None
+        if not name and not icon:
+            continue
+        k = (name.lower(), icon)
+        if k in seen:
+            continue
+        seen.add(k)
+        items.append({"name": name, "icon": icon})
+    if not 2 <= len(items) <= MAX_TIER_ITEMS:
+        raise HTTPException(400, f"Need between 2 and {MAX_TIER_ITEMS} items")
+
+    token = secrets.token_urlsafe(24)
+    for _ in range(10):
+        tid = new_id()
+        try:
+            with db() as c:
+                c.q(
+                    "INSERT INTO tierlists (id, title, items, tiers, admin_token, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (tid, title, json.dumps(items), json.dumps(DEFAULT_TIERS), token, int(time.time())),
+                )
+            return {"id": tid, "admin_token": token}
+        except IntegrityError:
+            continue
+    raise HTTPException(500, "Could not allocate id")
+
+
+def _my_placements(list_id: str, vid: str):
+    with db() as c:
+        if not c.one("SELECT 1 AS x FROM tier_voters WHERE list_id = ? AND voter_id = ?", (list_id, vid)):
+            return None
+        rows = c.all(
+            "SELECT item_idx, tier_idx FROM tier_placements WHERE list_id = ? AND voter_id = ?",
+            (list_id, vid),
+        )
+    return {str(r["item_idx"]): r["tier_idx"] for r in rows}
+
+
+@app.get("/api/tierlists/{list_id}")
+def read_tierlist(list_id: str, request: Request, me: int = 0):
+    state = tier_state(list_id)
+    if not me:
+        return no_store(state)
+    return no_store({**state, "mine": _my_placements(list_id, request.state.vid)})
+
+
+@app.post("/api/tierlists/{list_id}/vote")
+def vote_tierlist(list_id: str, body: TierVote, request: Request):
+    vid = request.state.vid
+    state = tier_state(list_id)
+    if state["closed"]:
+        raise HTTPException(410, "Voting is closed")
+    n_items, n_tiers = len(state["items"]), len(state["tiers"])
+    placed = {}
+    for p in body.placements:
+        if not (0 <= p.item < n_items and 0 <= p.tier < n_tiers):
+            raise HTTPException(400, "Invalid placement")
+        placed[p.item] = p.tier
+    if not placed:
+        raise HTTPException(400, "Place at least one item")
+
+    now = int(time.time())
+    try:
+        with db() as c, c.tx():
+            c.q("INSERT INTO tier_voters (list_id, voter_id, created_at) VALUES (?, ?, ?)",
+                (list_id, vid, now))
+            for item, tier in placed.items():
+                c.q("INSERT INTO tier_placements (list_id, voter_id, item_idx, tier_idx) VALUES (?, ?, ?, ?)",
+                    (list_id, vid, item, tier))
+    except IntegrityError:
+        raise HTTPException(409, "You already submitted a ranking for this list")
+    mine = {str(k): v for k, v in placed.items()}
+    return no_store({**tier_state(list_id, fresh=True), "mine": mine})
+
+
+@app.post("/api/tierlists/{list_id}/admin")
+def admin_tierlist(list_id: str, body: Admin):
+    with db() as c:
+        t = c.one("SELECT admin_token FROM tierlists WHERE id = ?", (list_id,))
+        if not t:
+            raise HTTPException(404, "Tier list not found")
+        if not hmac.compare_digest(t["admin_token"], body.admin_token):
+            raise HTTPException(403, "Not your tier list")
+        c.q("UPDATE tierlists SET closed = ? WHERE id = ?", (int(body.closed), list_id))
+    _cache.pop("t:" + list_id, None)
+    return {"ok": True, "closed": body.closed}
+
+
 if DEBUG_IP:
     @app.get("/api/debug/ip")
     def debug_ip(request: Request):
@@ -443,6 +653,21 @@ def poll_page(poll_id: str):
 @app.get("/p/{poll_id}/overlay")
 def overlay_page(poll_id: str):
     return FileResponse(STATIC / "overlay.html")
+
+
+@app.get("/tier")
+def tier_create_page():
+    return FileResponse(STATIC / "tier_create.html")
+
+
+@app.get("/t/{list_id}")
+def tier_page(list_id: str):
+    return FileResponse(STATIC / "tier.html")
+
+
+@app.get("/t/{list_id}/overlay")
+def tier_overlay_page(list_id: str):
+    return FileResponse(STATIC / "tier_overlay.html")
 
 
 @app.get("/favicon.ico", include_in_schema=False)

@@ -311,7 +311,7 @@ def no_store(data: dict) -> JSONResponse:
 class CreatePoll(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_QUESTION)
     options: list[str]
-    strict_ip: bool = True
+    strict_ip: bool = False  # one vote per network; off by default, not exposed in the UI
 
 
 class Vote(BaseModel):

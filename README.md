@@ -4,7 +4,7 @@ Dead-simple polls for streamers. Type a question and options, hit **Create**, an
 
 ## Features
 - No accounts. Creating a poll takes about 5 seconds, and the link is copied automatically.
-- One vote per person, enforced by an anonymous browser cookie. Optionally also one vote per network/IP (on by default).
+- One vote per person, enforced by an anonymous browser cookie. The backend still supports an optional one-vote-per-IP mode (`strict_ip: true` in the API), but the UI doesn't offer it.
 - Results update live every 2-3 seconds.
 - **OBS overlay**: `/p/<id>/overlay` has a transparent background for a Browser Source. Add `?bg=1` for a solid panel.
 - The creator can close or reopen voting from the poll page. The admin token is kept in their browser.

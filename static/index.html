@@ -30,11 +30,6 @@
       <label class="field-label" style="margin-top:20px">Options</label>
       <div id="opts" class="options"></div>
 
-      <label class="toggle">
-        <input id="strict" type="checkbox" checked>
-        <span><b>One vote per network</b><br>Stops people voting twice with incognito tabs. Turn off if lots of voters share Wi-Fi (schools, offices).</span>
-      </label>
-
       <button id="create" class="btn primary big" type="submit">Create poll</button>
       <p id="err" class="error"></p>
     </form>
@@ -110,7 +105,6 @@
 
     function resetForm() {
       $("#form").reset();
-      $("#strict").checked = true;
       optsEl.innerHTML = "";
       addOption(); addOption();
       $("#err").textContent = "";
@@ -131,7 +125,7 @@
       try {
         const { id, admin_token } = await api("/api/polls", {
           method: "POST",
-          body: JSON.stringify({ question, options, strict_ip: $("#strict").checked }),
+          body: JSON.stringify({ question, options }),
         });
         MyPolls.save(id, { token: admin_token, question, created: Date.now() });
         showShare(id);

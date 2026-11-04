@@ -17,6 +17,8 @@ python -m uvicorn app:app --reload
 ```
 Then open http://localhost:8000
 
+Without a database URL the app uses a local SQLite file. To develop against Neon Postgres instead, run `neon env pull`. It writes `DATABASE_URL` and `DATABASE_URL_UNPOOLED` to the git-ignored `.env.local`, which the app reads on startup. `neon.ts` and `package.json` are for the Neon CLI only; the app itself is Python.
+
 ## Deploy (FastAPI Cloud)
 The app is hosted on FastAPI Cloud, connected to this repo. FastAPI Cloud runs several replicas and has no persistent disk, so production **must** use Postgres:
 

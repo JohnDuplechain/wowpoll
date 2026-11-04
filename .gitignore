@@ -2,3 +2,9 @@ __pycache__/
 *.db
 *.db-*
 .venv/
+.env
+.env.*
+.neon
+node_modules/
+.neon
+node_modules/

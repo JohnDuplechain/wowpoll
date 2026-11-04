@@ -25,6 +25,26 @@ from pydantic import BaseModel, Field
 BASE = Path(__file__).parent
 STATIC = BASE / "static"
 
+
+def _load_local_env() -> None:
+    """Local dev: read .env.local / .env (written by `neon env pull`). Real environment
+    variables always win, so hosted deployments are unaffected."""
+    for name in (".env.local", ".env"):
+        path = BASE / name
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip().removeprefix("export ").strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+_load_local_env()
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 IS_PG = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 SQLITE_PATH = os.environ.get("DB_PATH", str(BASE / "polls.db"))
@@ -58,7 +78,9 @@ if IS_PG:
         DATABASE_URL,
         min_size=1,
         max_size=int(os.environ.get("DB_POOL_SIZE", "10")),
-        kwargs={"autocommit": True, "row_factory": dict_row},
+        # DATABASE_URL is Neon's pooled (PgBouncer, transaction mode) URL: no
+        # server-side prepared statements, no session state.
+        kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": None},
         check=ConnectionPool.check_connection,  # survive Neon idling connections
         open=True,
     )
@@ -133,25 +155,33 @@ SCHEMA = [
 ]
 
 
+def _setup(c: Conn) -> str:
+    for stmt in SCHEMA:
+        c.q(stmt)
+    # One secret shared by every replica, generated on first boot.
+    c.q(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
+        ("ip_secret", secrets.token_hex(32)),
+    )
+    return c.one("SELECT value FROM settings WHERE key = ?", ("ip_secret",))["value"]
+
+
 def init_db() -> str:
     """Create tables and return the shared secret used to hash IPs."""
-    with db() as c:
-        if IS_PG:
-            c.q("SELECT pg_advisory_lock(727001)")  # replicas may boot at the same time
-        else:
+    if IS_PG:
+        # Schema changes go over the direct connection (Neon's advice); falls back to
+        # DATABASE_URL when no unpooled URL is provided (e.g. some host integrations).
+        url = os.environ.get("DATABASE_URL_UNPOOLED") or DATABASE_URL
+        with psycopg.connect(url, row_factory=dict_row, prepare_threshold=None) as raw:
+            with raw.transaction():
+                # Transaction-scoped lock: replicas booting together run setup one at a
+                # time, and it is safe even through a transaction-mode pooler.
+                raw.execute("SELECT pg_advisory_xact_lock(727001)")
+                secret = _setup(Conn(raw))
+    else:
+        with db() as c:
             c.q("PRAGMA journal_mode=WAL")
-        try:
-            for stmt in SCHEMA:
-                c.q(stmt)
-            # One secret shared by every replica, generated on first boot.
-            c.q(
-                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING",
-                ("ip_secret", secrets.token_hex(32)),
-            )
-            secret = c.one("SELECT value FROM settings WHERE key = ?", ("ip_secret",))["value"]
-        finally:
-            if IS_PG:
-                c.q("SELECT pg_advisory_unlock(727001)")
+            secret = _setup(c)
     return os.environ.get("SECRET_KEY") or secret
 
 

@@ -8,6 +8,7 @@ Run locally:  python -m uvicorn app:app --reload
 """
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import secrets
@@ -49,11 +50,24 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 IS_PG = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 SQLITE_PATH = os.environ.get("DB_PATH", str(BASE / "polls.db"))
 
-# How many reverse proxies sit in front of the app. The client IP is taken that many
-# entries from the right of X-Forwarded-For (the right side is added by trusted proxies,
-# the left side can be faked by the client). Defaults to 1 on FastAPI Cloud, 0 locally.
+# Client IP detection behind proxies. X-Forwarded-For is built left to right: anything a
+# client sends comes first, then each proxy appends the address it received from. So we
+# walk it from the RIGHT, skipping our own infrastructure (private addresses and
+# Cloudflare, which fronts FastAPI Cloud); the first other address is the real client.
+# Set PROXY_HOPS=<n> to instead take the n-th entry from the right.
 ON_FASTAPI_CLOUD = "FASTAPICLOUD_DEPLOYMENT_ID" in os.environ
-PROXY_HOPS = int(os.environ.get("PROXY_HOPS", "1" if ON_FASTAPI_CLOUD else "0"))
+TRUST_PROXY_CHAIN = os.environ.get("TRUST_PROXY_CHAIN", "1" if ON_FASTAPI_CLOUD else "0") == "1"
+PROXY_HOPS = int(os.environ.get("PROXY_HOPS", "0"))
+
+# https://www.cloudflare.com/ips/
+CLOUDFLARE_NETS = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+    "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+    "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+    "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+)]
 DEBUG_IP = os.environ.get("DEBUG_IP") == "1"
 
 MAX_OPTIONS = 10
@@ -190,11 +204,26 @@ SECRET = init_db()
 
 # ---------- helpers ----------
 
+def _is_infrastructure(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return (
+        addr.is_private or addr.is_loopback or addr.is_link_local
+        or any(addr in net for net in CLOUDFLARE_NETS)
+    )
+
+
 def client_ip(req: Request) -> str:
-    if PROXY_HOPS > 0:
-        fwd = [p.strip() for p in req.headers.get("x-forwarded-for", "").split(",") if p.strip()]
-        if fwd:
-            return fwd[-PROXY_HOPS] if len(fwd) >= PROXY_HOPS else fwd[0]
+    fwd = [p.strip() for p in req.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    if fwd and PROXY_HOPS > 0:
+        return fwd[-PROXY_HOPS] if len(fwd) >= PROXY_HOPS else fwd[0]
+    if fwd and TRUST_PROXY_CHAIN:
+        for ip in reversed(fwd):
+            if not _is_infrastructure(ip):
+                return ip
+        return fwd[0]
     return req.client.host if req.client else "unknown"
 
 
@@ -392,7 +421,7 @@ if DEBUG_IP:
         """Temporary: set DEBUG_IP=1 to check which IP the app sees behind the proxy."""
         return {
             "chosen_ip": client_ip(request),
-            "proxy_hops": PROXY_HOPS,
+            "mode": f"hops={PROXY_HOPS}" if PROXY_HOPS else ("chain" if TRUST_PROXY_CHAIN else "socket"),
             "socket_ip": request.client.host if request.client else None,
             "x_forwarded_for": request.headers.get("x-forwarded-for"),
             "x_real_ip": request.headers.get("x-real-ip"),

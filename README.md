@@ -31,7 +31,8 @@ Environment variables:
 | Var | Purpose |
 |---|---|
 | `DATABASE_URL` | Postgres connection string. Without it the app uses a local SQLite file (`DB_PATH`), which is for development only. |
-| `PROXY_HOPS` | Number of proxies in front of the app, used to find the real client IP in `X-Forwarded-For`. Defaults to `1` on FastAPI Cloud and `0` locally. |
+| `TRUST_PROXY_CHAIN` | Finds the real client IP by reading `X-Forwarded-For` from the right and skipping private and Cloudflare addresses, so faked entries are ignored. On by default on FastAPI Cloud. |
+| `PROXY_HOPS` | Optional override: take the client IP from the n-th `X-Forwarded-For` entry counted from the right. |
 | `DEBUG_IP` | Set to `1` temporarily to enable `/api/debug/ip`, which shows the IP the app sees. Use it to check `PROXY_HOPS`. |
 | `SECRET_KEY` | Optional override for the IP-hashing secret (one is otherwise stored in the database). |
 | `DB_POOL_SIZE` | Postgres connections per replica (default 10). |

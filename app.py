@@ -445,6 +445,11 @@ def overlay_page(poll_id: str):
     return FileResponse(STATIC / "overlay.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(STATIC / "icons" / "favicon.ico", headers={"Cache-Control": "public, max-age=604800"})
+
+
 @app.get("/healthz")
 def health():
     return {"ok": True, "db": "postgres" if IS_PG else "sqlite"}

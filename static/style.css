@@ -1,21 +1,25 @@
-/* WowPoll: "twilight frontier" theme.
-   A painted dusk sky, gold-trimmed panels, a classic serif for display type, and
-   teal / royal-blue buttons. */
+/* WowPoll: "parchment frontier" theme.
+   Aged olive-brown parchment, slate-teal gold-trimmed panels, a classic serif
+   for display type, and teal / royal-blue buttons. */
 :root {
-  --bg: #0b1430;
-  --panel: rgba(14, 24, 56, .80);
-  --panel-2: rgba(24, 38, 82, .88);
-  --panel-hover: rgba(34, 52, 106, .95);
+  --bg: #705c3c;
+  /* Panels: deep version of the emblem's blue */
+  --panel: rgba(8, 48, 66, .92);
+  --panel-2: rgba(12, 64, 86, .94);
+  --panel-hover: rgba(16, 82, 108, .96);
+  --well: rgba(4, 28, 40, .78);
   --line: rgba(214, 178, 106, .35);
   --line-strong: rgba(226, 194, 122, .75);
   --text: #f5ecd8;
-  --muted: #b8b2cc;
+  --muted: #b9ab93;        /* warm stone (was a cool lavender grey) */
+  --placeholder: #8c8170;
   --gold: #e6c67e;
   --gold-deep: #a8813e;
-  --teal: #1f8a7a;
-  --teal-deep: #135f55;
-  --royal: #2b6aa6;
-  --royal-deep: #1a4677;
+  /* Buttons: the emblem's bright blue (primary) and a deeper blue (secondary) */
+  --teal: #168fb2;
+  --teal-deep: #0a6382;
+  --royal: #105a75;
+  --royal-deep: #093d52;
   --accent: var(--gold);
   --accent-2: var(--gold);
   --danger: #ff7a7a;
@@ -33,25 +37,29 @@ body {
   font: 16px/1.55 var(--font);
   min-height: 100vh;
   background-color: var(--bg);
+  /* Seamless parchment tile (tools/make_parchment.py), fading from brown at the
+     top to near-black at the bottom of the page. */
   background-image:
-    radial-gradient(1100px 520px at 18% -4%, rgba(255, 148, 86, .42), transparent 62%),
-    radial-gradient(900px 480px at 82% 2%, rgba(222, 108, 186, .30), transparent 62%),
-    radial-gradient(700px 400px at 50% 30%, rgba(120, 110, 230, .25), transparent 70%),
-    linear-gradient(180deg, #43307a 0%, #2b3378 26%, #172660 55%, #0d1838 80%, #0b1430 100%);
-  background-attachment: fixed;
+    linear-gradient(180deg,
+      rgba(12, 9, 5, 0) 0%,
+      rgba(12, 9, 5, .12) 25%,
+      rgba(12, 9, 5, .55) 60%,
+      rgba(9, 7, 4, .88) 85%,
+      rgba(7, 5, 3, .97) 100%),
+    url("/static/parchment.jpg");
+  background-size: 100% 100%, 1024px 1024px;
+  background-repeat: no-repeat, repeat;
 }
+html { background: #0a0805; } /* matches the bottom when scrolling past the end */
 
-/* Distant mountain ridges along the bottom of the sky. */
+/* Faint darkening toward the edges. */
 body::before {
   content: "";
   position: fixed;
-  inset: auto 0 0 0;
-  height: 46vh;
+  inset: 0;
   pointer-events: none;
   z-index: -1;
-  background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 400' preserveAspectRatio='none'%3E%3Cpath fill='%23324489' fill-opacity='.55' d='M0 260 L120 170 L210 220 L330 110 L430 200 L520 150 L640 60 L760 190 L860 140 L980 210 L1090 90 L1200 180 L1310 130 L1420 200 L1520 150 L1600 190 V400 H0Z'/%3E%3Cpath fill='%231b2a5e' fill-opacity='.85' d='M0 320 L140 250 L260 300 L380 220 L500 290 L620 240 L740 310 L870 230 L990 290 L1110 250 L1240 320 L1360 260 L1480 300 L1600 270 V400 H0Z'/%3E%3Cpath fill='%230d1838' d='M0 370 L180 330 L360 360 L560 320 L760 365 L960 335 L1160 370 L1380 340 L1600 360 V400 H0Z'/%3E%3C/svg%3E")
-    bottom / 100% 100% no-repeat;
+  background: radial-gradient(ellipse at 50% 35%, transparent 55%, rgba(30, 20, 8, .22) 100%);
 }
 
 a { color: var(--gold); }
@@ -62,8 +70,8 @@ a { color: var(--gold); }
 .brand {
   display: inline-flex; align-items: center; gap: 12px;
   font: 700 22px var(--display); letter-spacing: .06em;
-  color: var(--gold); text-decoration: none; margin-bottom: 30px;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, .55);
+  color: #f6e3b0; text-decoration: none; margin-bottom: 30px;
+  text-shadow: 0 2px 3px rgba(40, 26, 8, .7), 0 0 12px rgba(30, 20, 6, .4);
 }
 .brand .logo {
   width: 52px; height: 52px; flex: none;
@@ -75,10 +83,15 @@ a { color: var(--gold); }
 h1 {
   font: 700 clamp(30px, 6.4vw, 44px)/1.12 var(--display);
   letter-spacing: .01em; margin: 0 0 10px;
-  color: #f3e4c0;
-  text-shadow: 0 3px 18px rgba(0, 0, 0, .6);
+  /* Engraved metallic look: pale cream fading to rose-taupe */
+  color: #efe0c8;
+  background: linear-gradient(180deg, #fbf1e1 0%, #ecd9c2 45%, #c9ae99 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 1px rgba(25, 15, 4, .75)) drop-shadow(0 6px 14px rgba(20, 12, 3, .45));
 }
-.sub { color: #d9d1e6; margin: 0 0 28px; font-size: 17px; text-shadow: 0 1px 8px rgba(0, 0, 0, .5); }
+.sub { color: #ece2cf; margin: 0 0 28px; font-size: 17px; text-shadow: 0 1px 3px rgba(40, 26, 8, .6); }
 
 /* Gold-trimmed panel */
 .card {
@@ -108,7 +121,7 @@ label.field-label {
 
 input[type=text] {
   width: 100%;
-  background: rgba(8, 14, 36, .75);
+  background: var(--well);
   border: 1px solid var(--line);
   color: var(--text);
   border-radius: 8px;
@@ -117,7 +130,7 @@ input[type=text] {
   outline: none;
   transition: border-color .15s, box-shadow .15s;
 }
-input[type=text]::placeholder { color: #7f7a98; }
+input[type=text]::placeholder { color: var(--placeholder); }
 input[type=text]:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(230, 198, 126, .22); }
 input.question { font-size: 19px; font-weight: 600; padding: 15px 16px; }
 
@@ -179,24 +192,24 @@ input.question { font-size: 19px; font-weight: 600; padding: 15px 16px; }
 .results { display: grid; gap: 12px; }
 .res {
   position: relative; overflow: hidden;
-  background: rgba(8, 14, 36, .7); border: 1px solid var(--line); border-radius: 8px;
+  background: var(--well); border: 1px solid var(--line); border-radius: 8px;
   padding: 14px 16px;
 }
 .res .bar {
   position: absolute; inset: 0 auto 0 0; width: 0;
-  background: linear-gradient(90deg, rgba(31, 138, 122, .7), rgba(43, 106, 166, .45));
+  background: linear-gradient(90deg, rgba(22, 143, 178, .72), rgba(10, 99, 130, .45));
   transition: width .6s cubic-bezier(.2, .8, .2, 1);
 }
 .res.lead { border-color: var(--line-strong); }
 .res.lead .bar { background: linear-gradient(90deg, rgba(230, 198, 126, .55), rgba(168, 129, 62, .3)); }
 .res .line { position: relative; display: flex; justify-content: space-between; gap: 12px; font-weight: 600; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
 .res .pct { font: 700 17px var(--display); font-variant-numeric: tabular-nums; color: #fbeccb; }
-.res .cnt { position: relative; color: #cfc8de; font-size: 13px; font-variant-numeric: tabular-nums; }
+.res .cnt { position: relative; color: #d3c6ae; font-size: 13px; font-variant-numeric: tabular-nums; }
 .res .mine { color: var(--gold); font: 700 11px var(--display); margin-left: 8px; letter-spacing: .1em; }
 
 .meta { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; color: var(--muted); font-size: 14px; flex-wrap: wrap; gap: 8px; }
-.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; background: rgba(8, 14, 36, .7); border: 1px solid var(--line); font: 700 12px var(--display); letter-spacing: .08em; color: var(--text); }
-.pill .live { width: 8px; height: 8px; border-radius: 50%; background: #5fe0b8; box-shadow: 0 0 8px #5fe0b8; animation: pulse 1.6s infinite; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; background: var(--well); border: 1px solid var(--line); font: 700 12px var(--display); letter-spacing: .08em; color: var(--text); }
+.pill .live { width: 8px; height: 8px; border-radius: 50%; background: #5fd3f2; box-shadow: 0 0 8px #5fd3f2; animation: pulse 1.6s infinite; }
 .pill.closed { color: var(--danger); }
 
 .admin { margin-top: 20px; border-style: dashed; border-top-style: dashed; }
@@ -204,7 +217,7 @@ input.question { font-size: 19px; font-weight: 600; padding: 15px 16px; }
 .admin h3 { margin: 0 0 12px; font: 700 12px var(--display); color: var(--gold); text-transform: uppercase; letter-spacing: .14em; }
 
 .recent { margin-top: 34px; }
-.recent h2 { font: 700 14px var(--display); color: var(--gold); letter-spacing: .12em; text-transform: uppercase; margin: 0 0 10px; }
+.recent h2 { font: 700 14px var(--display); color: #f3e2b8; text-shadow: 0 1px 3px rgba(40, 26, 8, .6); letter-spacing: .12em; text-transform: uppercase; margin: 0 0 10px; }
 .recent a { display: block; padding: 11px 14px; border-radius: 8px; color: var(--text); text-decoration: none; border: 1px solid var(--line); margin-bottom: 6px; background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recent a:hover { border-color: var(--gold); }
 
